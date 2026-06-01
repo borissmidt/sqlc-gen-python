@@ -1020,13 +1020,16 @@ func buildQueryTree(ctx *pyTmplCtx, i *importer, source string) *pyast.Node {
 				)
 				f.Returns = subscriptNode("Optional", q.Ret.Annotation())
 			case ":many":
-				stream := connMethodNode("stream", q.ConstantName, q.ArgDictNode())
 				f.Body = append(f.Body,
-					assignNode("result", poet.Await(stream)),
+					assignNode("rows", poet.Node(
+						&pyast.Call{
+							Func: poet.Attribute(poet.Await(exec), "all"),
+						},
+					)),
 					poet.Node(
-						&pyast.AsyncFor{
+						&pyast.For{
 							Target: poet.Name("row"),
-							Iter:   poet.Name("result"),
+							Iter:   poet.Name("rows"),
 							Body: []*pyast.Node{
 								poet.Expr(
 									poet.Yield(
