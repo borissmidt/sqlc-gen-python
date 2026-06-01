@@ -5,3 +5,5 @@ bin
 .direnv
 .devenv*
 devenv.local.nix
+
+.idea
