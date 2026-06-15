@@ -76,3 +76,42 @@ class Status(str, enum.Enum):
     OPEN = "op!en"
     CLOSED = "clo@sed"
 ```
+
+### Map domains (and other unknown types) to Python types
+
+Option: `domain_overrides`
+
+sqlc does not pass `CREATE DOMAIN` definitions (their base type or `CHECK`
+constraints) to code generation plugins, so columns using a domain are emitted
+as `Any` and a `unknown PostgreSQL type` warning is logged. The
+`domain_overrides` option lets you map a PostgreSQL type name to a
+fully-qualified Python type. The required `import` is added automatically,
+including for nested modules.
+
+```yaml
+options:
+  package: authors
+  domain_overrides:
+    job_status: my.module.JobStatus
+    positive_int: decimal.Decimal
+```
+
+Given a domain `job_status` used by a `status` column, this generates:
+
+```py
+import decimal
+
+import my.module
+
+
+@dataclasses.dataclass()
+class Job:
+    id: int
+    status: my.module.JobStatus
+    priority: Optional[decimal.Decimal]
+```
+
+The key is matched against the column's data type, its bare type name, and its
+schema-qualified name (e.g. `public.job_status`), so you can key the override
+however is most convenient. This also works for any other type sqlc reports as
+unknown, not just domains.

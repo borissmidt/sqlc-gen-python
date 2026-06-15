@@ -10,4 +10,10 @@ type Config struct {
 	EmitStrEnum                 bool     `json:"emit_str_enum"`
 	QueryParameterLimit         *int32   `json:"query_parameter_limit"`
 	InflectionExcludeTableNames []string `json:"inflection_exclude_table_names"`
+
+	// DomainOverrides maps a PostgreSQL type name (typically a DOMAIN, whose
+	// definition sqlc does not pass to plugins) to a fully-qualified Python
+	// type. For example {"job_status": "my.module.JobStatus"} emits a
+	// "import my.module" and annotates the column as "my.module.JobStatus".
+	DomainOverrides map[string]string `json:"domain_overrides"`
 }

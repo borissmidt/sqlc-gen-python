@@ -180,8 +180,8 @@ func (q Query) ArgDictNode() *pyast.Node {
 	}
 }
 
-func makePyType(req *plugin.GenerateRequest, col *plugin.Column) pyType {
-	typ := pyInnerType(req, col)
+func makePyType(conf Config, req *plugin.GenerateRequest, col *plugin.Column) pyType {
+	typ := pyInnerType(conf, req, col)
 	return pyType{
 		InnerType: typ,
 		IsArray:   col.IsArray,
@@ -189,10 +189,10 @@ func makePyType(req *plugin.GenerateRequest, col *plugin.Column) pyType {
 	}
 }
 
-func pyInnerType(req *plugin.GenerateRequest, col *plugin.Column) string {
+func pyInnerType(conf Config, req *plugin.GenerateRequest, col *plugin.Column) string {
 	switch req.Settings.Engine {
 	case "postgresql":
-		return postgresType(req, col)
+		return postgresType(conf, req, col)
 	default:
 		log.Println("unsupported engine type")
 		return "Any"
@@ -285,7 +285,7 @@ func buildModels(conf Config, req *plugin.GenerateRequest) []Struct {
 				Comment: table.Comment,
 			}
 			for _, column := range table.Columns {
-				typ := makePyType(req, column) // TODO: This used to call compiler.ConvertColumn?
+				typ := makePyType(conf, req, column) // TODO: This used to call compiler.ConvertColumn?
 				typ.InnerType = strings.TrimPrefix(typ.InnerType, "models.")
 				s.Fields = append(s.Fields, Field{
 					Name:    column.Name,
@@ -321,7 +321,7 @@ type pyColumn struct {
 	*plugin.Column
 }
 
-func columnsToStruct(req *plugin.GenerateRequest, name string, columns []pyColumn) *Struct {
+func columnsToStruct(conf Config, req *plugin.GenerateRequest, name string, columns []pyColumn) *Struct {
 	gs := Struct{
 		Name: name,
 	}
@@ -344,7 +344,7 @@ func columnsToStruct(req *plugin.GenerateRequest, name string, columns []pyColum
 		}
 		gs.Fields = append(gs.Fields, Field{
 			Name: fieldName,
-			Type: makePyType(req, c.Column),
+			Type: makePyType(conf, req, c.Column),
 		})
 		seen[colName]++
 	}
@@ -406,14 +406,14 @@ func buildQueries(conf Config, req *plugin.GenerateRequest, structs []Struct) ([
 			gq.Args = []QueryValue{{
 				Emit:   true,
 				Name:   "arg",
-				Struct: columnsToStruct(req, query.Name+"Params", cols),
+				Struct: columnsToStruct(conf, req, query.Name+"Params", cols),
 			}}
 		} else {
 			args := make([]QueryValue, 0, len(query.Params))
 			for _, p := range query.Params {
 				args = append(args, QueryValue{
 					Name: paramName(p),
-					Typ:  makePyType(req, p.Column),
+					Typ:  makePyType(conf, req, p.Column),
 				})
 			}
 			gq.Args = args
@@ -423,7 +423,7 @@ func buildQueries(conf Config, req *plugin.GenerateRequest, structs []Struct) ([
 			c := query.Columns[0]
 			gq.Ret = QueryValue{
 				Name: columnName(c, 0),
-				Typ:  makePyType(req, c),
+				Typ:  makePyType(conf, req, c),
 			}
 		} else if len(query.Columns) > 1 {
 			var gs *Struct
@@ -438,7 +438,7 @@ func buildQueries(conf Config, req *plugin.GenerateRequest, structs []Struct) ([
 				for i, f := range s.Fields {
 					c := query.Columns[i]
 					// HACK: models do not have "models." on their types, so trim that so we can find matches
-					trimmedPyType := makePyType(req, c)
+					trimmedPyType := makePyType(conf, req, c)
 					trimmedPyType.InnerType = strings.TrimPrefix(trimmedPyType.InnerType, "models.")
 					sameName := f.Name == columnName(c, i)
 					sameType := f.Type == trimmedPyType
@@ -461,7 +461,7 @@ func buildQueries(conf Config, req *plugin.GenerateRequest, structs []Struct) ([
 						Column: c,
 					})
 				}
-				gs = columnsToStruct(req, query.Name+"Row", columns)
+				gs = columnsToStruct(conf, req, query.Name+"Row", columns)
 				emit = true
 			}
 			gq.Ret = QueryValue{
@@ -1030,6 +1030,25 @@ func buildQueryTree(ctx *pyTmplCtx, i *importer, source string) *pyast.Node {
 						&pyast.For{
 							Target: poet.Name("row"),
 							Iter:   poet.Name("rows"),
+							Body: []*pyast.Node{
+								poet.Expr(
+									poet.Yield(
+										q.Ret.RowNode("row"),
+									),
+								),
+							},
+						},
+					),
+				)
+				f.Returns = subscriptNode("AsyncIterator", q.Ret.Annotation())
+			case ":stream":
+				stream := connMethodNode("stream", q.ConstantName, q.ArgDictNode())
+				f.Body = append(f.Body,
+					assignNode("result", poet.Await(stream)),
+					poet.Node(
+						&pyast.AsyncFor{
+							Target: poet.Name("row"),
+							Iter:   poet.Name("result"),
 							Body: []*pyast.Node{
 								poet.Expr(
 									poet.Yield(
