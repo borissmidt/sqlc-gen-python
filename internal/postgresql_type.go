@@ -7,8 +7,15 @@ import (
 	"github.com/sqlc-dev/plugin-sdk-go/sdk"
 )
 
-func postgresType(req *plugin.GenerateRequest, col *plugin.Column) string {
+func postgresType(conf Config, req *plugin.GenerateRequest, col *plugin.Column) string {
 	columnType := sdk.DataType(col.Type)
+
+	// User-configured overrides take precedence. This is the only way to map
+	// PostgreSQL DOMAINs (and other types sqlc does not describe to plugins) to
+	// a concrete Python type, since their definitions never reach the plugin.
+	if py, ok := domainOverride(conf, col, columnType); ok {
+		return py
+	}
 
 	switch columnType {
 	case "serial", "serial4", "pg_catalog.serial4", "bigserial", "serial8", "pg_catalog.serial8", "smallserial", "serial2", "pg_catalog.serial2", "integer", "int", "int4", "pg_catalog.int4", "bigint", "int8", "pg_catalog.int8", "smallint", "int2", "pg_catalog.int2":
@@ -59,4 +66,29 @@ func postgresType(req *plugin.GenerateRequest, col *plugin.Column) string {
 		log.Printf("unknown PostgreSQL type: %s\n", columnType)
 		return "Any"
 	}
+}
+
+// domainOverride looks up a configured Python type for the given column type.
+// It accepts the plain data-type string (e.g. "job_status"), the bare type
+// name, and the schema-qualified name (e.g. "public.job_status"), so users can
+// key the override however is most convenient.
+func domainOverride(conf Config, col *plugin.Column, columnType string) (string, bool) {
+	if len(conf.DomainOverrides) == 0 {
+		return "", false
+	}
+	candidates := []string{columnType}
+	if col.Type != nil {
+		if col.Type.Name != "" {
+			candidates = append(candidates, col.Type.Name)
+		}
+		if col.Type.Schema != "" && col.Type.Name != "" {
+			candidates = append(candidates, col.Type.Schema+"."+col.Type.Name)
+		}
+	}
+	for _, c := range candidates {
+		if py, ok := conf.DomainOverrides[c]; ok {
+			return py, true
+		}
+	}
+	return "", false
 }

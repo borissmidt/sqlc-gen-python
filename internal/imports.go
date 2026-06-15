@@ -96,6 +96,7 @@ func (i *importer) modelImportSpecs() (map[string]importSpec, map[string]importS
 	}
 
 	pkg := make(map[string]importSpec)
+	addOverrideImports(pkg, std, i.C, modelUses)
 
 	return std, pkg
 }
@@ -135,6 +136,7 @@ func (i *importer) queryImportSpecs(fileName string) (map[string]importSpec, map
 	if i.C.EmitAsyncQuerier {
 		pkg["sqlalchemy.ext.asyncio"] = importSpec{Module: "sqlalchemy.ext.asyncio"}
 	}
+	addOverrideImports(pkg, std, i.C, queryUses)
 
 	queryValueModelImports := func(qv QueryValue) {
 		if qv.IsStruct() && qv.EmitStruct() {
@@ -250,6 +252,39 @@ func buildImportBlock(pkgs map[string]importSpec) string {
 	}
 	sort.Strings(importStrings)
 	return strings.Join(importStrings, "\n")
+}
+
+// addOverrideImports adds an "import <module>" for every configured domain
+// override whose Python type is actually referenced. For a value like
+// "my.module.JobStatus" it imports "my.module" (the segment before the final
+// dot). Bare names without a module are left untouched.
+func addOverrideImports(pkg, std map[string]importSpec, conf Config, uses func(name string) bool) {
+	for _, pyType := range conf.DomainOverrides {
+		if !uses(pyType) {
+			continue
+		}
+		module := moduleOf(pyType)
+		if module == "" || moduleImported(std, module) || moduleImported(pkg, module) {
+			continue
+		}
+		pkg[module] = importSpec{Module: module}
+	}
+}
+
+func moduleImported(specs map[string]importSpec, module string) bool {
+	for _, s := range specs {
+		if s.Module == module {
+			return true
+		}
+	}
+	return false
+}
+
+func moduleOf(pyType string) string {
+	if idx := strings.LastIndex(pyType, "."); idx >= 0 {
+		return pyType[:idx]
+	}
+	return ""
 }
 
 func stdImports(uses func(name string) bool) map[string]importSpec {
